@@ -30,17 +30,20 @@ Required for workbook resolve and datasource queries. Worksheet-only mode still 
 npm install
 pip install -r requirements.txt   # or use .venv
 npm run build
-npm start
+npm run start:local
 ```
 
 UI + API: http://localhost:8787/
+
+For **Render / production (dashboard, no PAT)**, see the main [README](../README.md#deploy-to-render-dashboard-extension--no-pat).  
+Set the manifest URL to your HTTPS Render URL. On the dashboard the extension uses **session datasource** data — no Tableau PAT.
 
 ### 3. Edit the manifest URL
 
 In `NarrativeInsights.trex`, set `<source-location><url>`:
 
 - **Local Tableau Desktop:** `http://localhost:8787/`
-- **Tableau Server / Cloud:** `https://your-server.example.com/` (HTTPS required)
+- **Tableau Server / Cloud (Render):** `https://YOUR-SERVICE.onrender.com/` (HTTPS required; allowlist in Extensions settings)
 
 ### 4. Add to a dashboard
 

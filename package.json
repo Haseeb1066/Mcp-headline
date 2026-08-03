@@ -8,7 +8,8 @@
     "dev:api": ".venv/bin/python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8787",
     "dev:web": "vite",
     "build": "vite build",
-    "start": ".venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8787}",
+    "start": "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8787}",
+    "start:local": ".venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8787}",
     "preview": "vite preview"
   },
   "devDependencies": {

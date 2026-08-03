@@ -60,10 +60,65 @@ http://localhost:5173/?mock=1
 
 ```bash
 npm run build
-npm start
+npm run start:local   # uses .venv
+# or: npm start       # system python (Render / production)
 ```
 
 Serves the built UI and API on port `8787` (or `$PORT`).
+
+## Deploy to Render (dashboard extension — no PAT, no Docker)
+
+Native **Python** web service. The UI is built during deploy; at runtime only FastAPI serves the app. When the extension runs **on a Tableau dashboard**, it reads session datasource data and POSTs to `/api/narrative`. **No Tableau PAT and no Docker.**
+
+### 1. Push the repo to GitHub
+
+Include `render.yaml`, `scripts/render-build.sh`, and the app source (do not commit `.env`).
+
+### 2. Create the service
+
+**Option A — Blueprint (recommended)**  
+1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**  
+2. Connect the repo → apply `render.yaml`  
+
+**Option B — Manual**  
+1. **New** → **Web Service** → connect repo  
+2. Runtime: **Python 3**  
+3. Build: `bash scripts/render-build.sh`  
+4. Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`  
+5. Health check path: `/api/health`  
+
+### 3. Environment variables
+
+| Variable | Required? | Notes |
+|----------|-----------|--------|
+| `OPENAI_API_KEY` | Optional | Enables AI insight sections; without it you still get quantitative analysis + template summary |
+| `OPENAI_MODEL` | No | Default `gpt-4o-mini` |
+| `PYTHON_VERSION` | No | Blueprint sets `3.12.0` |
+
+Do **not** set `TABLEAU_PAT_*` for dashboard use.
+
+### 4. Point the Tableau extension at Render
+
+After deploy you get a URL like `https://narrative-insights.onrender.com`.
+
+1. Edit `extension/NarrativeInsights.trex`:
+
+```xml
+<source-location>
+  <url>https://YOUR-SERVICE.onrender.com/</url>
+</source-location>
+```
+
+2. On Tableau Cloud / Server → **Settings → Extensions** → allowlist that HTTPS URL.  
+3. Add `NarrativeInsights.trex` to the dashboard (session datasource — no PAT).
+
+### 5. Verify
+
+- Health: `https://YOUR-SERVICE.onrender.com/api/health` (`hasTableau` can be `false` — expected)  
+- Mock UI: `https://YOUR-SERVICE.onrender.com/?mock=1`  
+- Real use: open the extension on a Tableau dashboard  
+
+**Note:** Free Render instances sleep when idle; first load can take ~30–60s.
 
 ## Tableau install
 
