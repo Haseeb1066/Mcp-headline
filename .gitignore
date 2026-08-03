@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.DS_Store
+.vite/
