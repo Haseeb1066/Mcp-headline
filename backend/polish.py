@@ -275,6 +275,67 @@ def generate_insight_sections(
                 "Cite them as invoice-volume / timing changes, not cash collections or spend reduction."
             ),
         }
+    context = analysis.get("context", {}) or {}
+    schema = analysis.get("schema", {}) or {}
+    field_blob = " ".join(
+        [
+            str(context.get("datasourceName") or ""),
+            str(context.get("dashboardName") or ""),
+            str(context.get("workbookName") or ""),
+            " ".join(str(x) for x in schema.get("measures", [])),
+            " ".join(str(x) for x in schema.get("dimensions", [])),
+            " ".join(str(x) for x in schema.get("dates", [])),
+            " ".join(date_fields),
+        ]
+    ).lower()
+    is_ap = any(
+        k in field_blob
+        for k in (
+            "payable",
+            "creditor",
+            "cleared flag",
+            "outstanding amount",
+            "aging category",
+            "invoice date",
+            "due date",
+        )
+    )
+    if is_ap:
+        system_prompt = (
+            "You are a senior accounts-payable and procurement analyst. "
+            "Create a rich executive narrative using ONLY supplied evidence. "
+            "Return JSON exactly as {\"sections\":[{\"title\":\"...\","
+            "\"insights\":[{\"text\":\"...\",\"severity\":\"critical|warning|opportunity|info\"}]}]}. "
+            "Create 4-6 meaningful sections and 3-5 insights per section. "
+            "Prefer section themes like: Overall Payables Position, Unpaid Exposure & Aging Risk, "
+            "Creditor Concentration, Payment Timing & Process Gaps, Priority Actions. "
+            "Each insight must cite concrete numbers, explain why it matters, and recommend a practical next step. "
+            "Do not invent causes; label plausible causes as investigation items. "
+            "Accounts-payable semantics: Cleared Flag Y means paid/settled and N means still unpaid. "
+            "Do not describe cleared/paid amounts as receivable. "
+            "Due Date totals show payment schedule timing, not cash-flow improvement. "
+            "Invoice Date MoM/QoQ/YoY figures are invoice-volume / timing signals — cite numbers exactly when provided, "
+            "but do not call them collections, cash saved, or spend reduction. "
+            "When quantitative.headline or quantitative.pointers are present, weave 2-4 of those numbered deltas into insights. "
+            "Prioritize unpaid (Cleared=N) risk, overdue aging, and top unpaid creditors. "
+            "Do not use markdown."
+        )
+    else:
+        system_prompt = (
+            "You are a senior business analyst for the dashboard/datasource provided. "
+            "Infer the domain from field names (e.g. Sales, Orders, Marketing) and write matching section titles. "
+            "Create a rich executive narrative using ONLY supplied evidence. "
+            "Return JSON exactly as {\"sections\":[{\"title\":\"...\","
+            "\"insights\":[{\"text\":\"...\",\"severity\":\"critical|warning|opportunity|info\"}]}]}. "
+            "Create 4-6 meaningful sections and 3-5 insights per section. "
+            "For sales/performance data prefer themes like: Overall Performance, Period Comparisons (MoM/QoQ/YoY), "
+            "Category or Region Drivers, Risks & Opportunities, Priority Actions. "
+            "Never use accounts-payable themes (creditors, cleared flags, aging payables) unless those fields exist. "
+            "Each insight must cite concrete numbers, explain why it matters, and recommend a practical next step. "
+            "Do not invent causes; label plausible causes as investigation items. "
+            "When quantitative.headline or quantitative.pointers are present, weave 2-4 of those numbered deltas into insights. "
+            "Do not use markdown."
+        )
     try:
         from openai import OpenAI
 
@@ -287,31 +348,15 @@ def generate_insight_sections(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a senior accounts-payable and procurement analyst. "
-                        "Create a rich executive narrative using ONLY supplied evidence. "
-                        "Return JSON exactly as {\"sections\":[{\"title\":\"...\","
-                        "\"insights\":[{\"text\":\"...\",\"severity\":\"critical|warning|opportunity|info\"}]}]}. "
-                        "Create 4-6 meaningful sections and 3-5 insights per section. "
-                        "Prefer section themes like: Overall Payables Position, Unpaid Exposure & Aging Risk, "
-                        "Creditor Concentration, Payment Timing & Process Gaps, Priority Actions. "
-                        "Each insight must cite concrete numbers, explain why it matters, and recommend a practical next step. "
-                        "Do not invent causes; label plausible causes as investigation items. "
-                        "Accounts-payable semantics: Cleared Flag Y means paid/settled and N means still unpaid. "
-                        "Do not describe cleared/paid amounts as receivable. "
-                        "Due Date totals show payment schedule timing, not cash-flow improvement. "
-                        "Invoice Date MoM/QoQ/YoY figures are invoice-volume / timing signals — cite numbers exactly when provided, "
-                        "but do not call them collections, cash saved, or spend reduction. "
-                        "When quantitative.headline or quantitative.pointers are present, weave 2-4 of those numbered deltas into insights. "
-                        "Prioritize unpaid (Cleared=N) risk, overdue aging, and top unpaid creditors. "
-                        "Do not use markdown."
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "datasource": analysis.get("context", {}).get("datasourceName"),
+                            "workbook": context.get("workbookName"),
+                            "dashboard": context.get("dashboardName"),
+                            "datasource": context.get("datasourceName"),
                             "evidence": evidence,
                             "computedAnalysis": {
                                 "kpis": analysis.get("kpis", []),

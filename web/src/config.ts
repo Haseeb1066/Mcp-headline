@@ -43,8 +43,6 @@ export function useServerContentMode(): boolean {
 export function useMockMode(): boolean {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
-  if (params.get("mock") === "1") return true;
-  if (useServerContentMode()) return false;
-  if (isTableauHost()) return false;
-  return params.get("mock") !== "0";
+  // Mock only when explicitly requested — never default to fake data
+  return params.get("mock") === "1";
 }

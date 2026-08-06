@@ -189,12 +189,34 @@ async def api_list_datasources(
         if (d.get("id") and d["id"] in linked_ids)
         or (d.get("name") and d["name"].casefold() in linked_names)
     ]
+    # Include connection datasources even if not in the published catalog
+    have_ids = {d.get("id") for d in workbook_ds if d.get("id")}
+    have_names = {(d.get("name") or "").casefold() for d in workbook_ds}
+    for c in connections:
+        cid = c.get("datasourceId") or ""
+        cname = c.get("datasourceName") or ""
+        if not cid and not cname:
+            continue
+        if cid in have_ids or cname.casefold() in have_names:
+            continue
+        workbook_ds.append(
+            {
+                "id": cid,
+                "name": cname or cid,
+                "isPublished": True,
+                "source": "workbook-connection",
+            }
+        )
+        if cid:
+            have_ids.add(cid)
+        if cname:
+            have_names.add(cname.casefold())
 
     return {
-        "datasources": workbook_ds or published,
+        "datasources": workbook_ds if connections else published,
         "allPublished": published,
         "workbookConnections": connections,
-        "scopedToWorkbook": bool(workbook_ds),
+        "scopedToWorkbook": bool(connections),
         "errors": errors,
     }
 

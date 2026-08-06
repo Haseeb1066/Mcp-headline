@@ -1,7 +1,5 @@
 import type { DatasourceInfo, ExtensionContext, TabularPayload } from "./types";
 
-const SETTINGS_DATASOURCE = "narrativeDatasource";
-
 function serializeCell(value: TableauDataValue): string | number | boolean | null {
   const raw = value?.value;
   if (raw === null || raw === undefined) return null;
@@ -90,18 +88,6 @@ export async function initTableauExtension(): Promise<ExtensionContext> {
   const worksheetNames = dashboard.worksheets.map((w) => w.name);
   const datasources = await collectSessionDatasources();
 
-  // Remember selected datasource name in session settings (no server id needed)
-  const settings = ext.settings;
-  const saved = settings.get(SETTINGS_DATASOURCE);
-  if (!saved && datasources[0]) {
-    settings.set(SETTINGS_DATASOURCE, datasources[0].name);
-    try {
-      await settings.saveAsync();
-    } catch {
-      /* ignore */
-    }
-  }
-
   return {
     workbookName: dashboard.workbook.name,
     dashboardName: dashboard.name,
@@ -114,35 +100,16 @@ export async function initTableauExtension(): Promise<ExtensionContext> {
 }
 
 /**
- * Pick the primary datasource for the *current* dashboard session.
- * Always binds to datasources on this dashboard (no Connected App / PAT).
- * Saved preference is used only if that same datasource exists here.
+ * Pick the primary datasource for the *current* dashboard only.
+ * Each dashboard extension instance reads its own session datasources.
  */
 export function pickSessionDatasource(
   datasources: DatasourceInfo[]
 ): DatasourceInfo | null {
   if (!datasources.length) return null;
-  const settings = window.tableau?.extensions?.settings;
-  const saved = settings?.get(SETTINGS_DATASOURCE);
-  if (saved) {
-    const match = datasources.find((d) => d.name === saved || d.id === saved);
-    if (match) return match;
-  }
-  // Prefer published datasources on this dashboard; otherwise first available
   const published = datasources.filter((d) => d.isPublished !== false);
   const pool = published.length ? published : datasources;
   return pool[0] ?? null;
-}
-
-export async function rememberSessionDatasource(name: string): Promise<void> {
-  const settings = window.tableau?.extensions?.settings;
-  if (!settings) return;
-  settings.set(SETTINGS_DATASOURCE, name);
-  try {
-    await settings.saveAsync();
-  } catch {
-    /* ignore */
-  }
 }
 
 /**

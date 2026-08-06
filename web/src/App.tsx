@@ -321,9 +321,11 @@ export function App() {
 
           const ctx: ExtensionContext = {
             workbookName: wb.name,
-            dashboardName: viewParam || "AI Generated Summary",
+            dashboardName: viewParam || viewNames[0] || wb.name || "Dashboard",
             worksheetNames: viewNames,
-            datasources: dashboardDs,
+            datasources: dashboardDs.length
+              ? dashboardDs
+              : [{ id: "", name: wb.name, isPublished: true, source: "workbook" }],
             workbook: wb,
             contentUrl: wb.contentUrl || contentUrl,
             source: "tableau",
@@ -331,9 +333,17 @@ export function App() {
           setContext(ctx);
           setActiveDatasource(
             dashboardDs.find((d) => d.name === dsParam || d.id === dsParam) ||
-              pickPrimaryDatasource(dashboardDs)
+              pickPrimaryDatasource(dashboardDs) ||
+              ctx.datasources[0]
           );
           return;
+        }
+
+        // Outside Tableau with no contentUrl: ask for a real workbook (no mock by default)
+        if (!window.tableau?.extensions) {
+          throw new Error(
+            "Open this as a Tableau dashboard extension, or pass a live workbook: ?contentUrl=Sales_AI-MCP"
+          );
         }
 
         // Tableau dashboard extension: datasource comes from the live session only
@@ -369,8 +379,34 @@ export function App() {
         const payload = await loadSessionDatasourceTable(activeDatasource, context);
         narrative = await fetchNarrative(payload, true);
       } else {
-        // Browser server-mode fallback (PAT)
-        try {
+        // Browser/server mode (PAT): prefer workbook view data for contentUrl
+        // (VizQL Data Service / query-datasource may be disabled on the server).
+        if (context.workbook?.id || context.contentUrl) {
+          try {
+            narrative = await fetchNarrativeFromWorkbook({
+              workbookId: context.workbook?.id || undefined,
+              contentUrl: context.contentUrl || undefined,
+              workbookName: context.workbookName,
+              viewName:
+                queryParam("view") ||
+                context.dashboardName ||
+                context.worksheetNames?.[0] ||
+                "Home",
+              dashboardName: context.dashboardName,
+            });
+          } catch (wbErr) {
+            narrative = await fetchNarrativeFromDatasource({
+              datasourceLuid:
+                activeDatasource.id && activeDatasource.id.includes("-")
+                  ? activeDatasource.id
+                  : undefined,
+              datasourceName: dsName,
+              workbookName: context.workbookName,
+              dashboardName: context.dashboardName,
+              fieldCaptions: apFieldCaptions(dsName),
+            });
+          }
+        } else {
           narrative = await fetchNarrativeFromDatasource({
             datasourceLuid:
               activeDatasource.id && activeDatasource.id.includes("-")
@@ -381,18 +417,6 @@ export function App() {
             dashboardName: context.dashboardName,
             fieldCaptions: apFieldCaptions(dsName),
           });
-        } catch (dsErr) {
-          if (context.workbook?.id || context.contentUrl) {
-            narrative = await fetchNarrativeFromWorkbook({
-              workbookId: context.workbook?.id || undefined,
-              contentUrl: context.contentUrl || undefined,
-              workbookName: context.workbookName,
-              viewName: queryParam("view") || "Executive Summary",
-              dashboardName: context.dashboardName,
-            });
-          } else {
-            throw dsErr;
-          }
         }
       }
 
@@ -421,11 +445,9 @@ export function App() {
         </header>
         <div className="error-box">{bootError}</div>
         <p className="hint">
-          In Tableau, place this extension on a dashboard — it reads the datasource from that
-          session. Browser tests:{" "}
-          <a href="?contentUrl=AccountsPayableAI-MCP&datasource=AP%20Dataset">
-            ?contentUrl=AccountsPayableAI-MCP&datasource=AP Dataset
-          </a>
+          Place this extension on any Tableau dashboard — it connects to that dashboard’s
+          datasource automatically (no PAT). Hosted URL:{" "}
+          <code>https://mcp-headline.onrender.com/</code>
         </p>
       </div>
     );
