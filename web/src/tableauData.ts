@@ -113,6 +113,11 @@ export async function initTableauExtension(): Promise<ExtensionContext> {
   };
 }
 
+/**
+ * Pick the primary datasource for the *current* dashboard session.
+ * Always binds to datasources on this dashboard (no Connected App / PAT).
+ * Saved preference is used only if that same datasource exists here.
+ */
 export function pickSessionDatasource(
   datasources: DatasourceInfo[]
 ): DatasourceInfo | null {
@@ -123,6 +128,7 @@ export function pickSessionDatasource(
     const match = datasources.find((d) => d.name === saved || d.id === saved);
     if (match) return match;
   }
+  // Prefer published datasources on this dashboard; otherwise first available
   const published = datasources.filter((d) => d.isPublished !== false);
   const pool = published.length ? published : datasources;
   return pool[0] ?? null;

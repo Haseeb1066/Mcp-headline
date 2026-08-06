@@ -13,7 +13,6 @@ import {
   initTableauExtension,
   loadSessionDatasourceTable,
   pickSessionDatasource,
-  rememberSessionDatasource,
 } from "./tableauData";
 import type {
   DatasourceInfo,
@@ -144,8 +143,7 @@ function pickPrimaryDatasource(datasources: DatasourceInfo[]): DatasourceInfo | 
   if (!datasources.length) return null;
   const published = datasources.filter((d) => d.isPublished !== false);
   const pool = published.length ? published : datasources;
-  const preferred = pool.find((d) => /ap dataset|accounts payable|payable/i.test(d.name));
-  return preferred || pool[0];
+  return pool[0];
 }
 
 function apFieldCaptions(name: string): string[] | undefined {
@@ -367,8 +365,7 @@ export function App() {
       if (mock) {
         narrative = await fetchNarrative(getMockDatasourceTable(dsName));
       } else if (!serverMode && window.tableau?.extensions) {
-        // Prefer session datasource data — no PAT required
-        await rememberSessionDatasource(dsName);
+        // Session datasource from whatever dashboard this extension is on — no PAT
         const payload = await loadSessionDatasourceTable(activeDatasource, context);
         narrative = await fetchNarrative(payload, true);
       } else {
@@ -446,7 +443,7 @@ export function App() {
             {result?.context.dateRange
               ? ` · ${result.context.dateRange.min} → ${result.context.dateRange.max}`
               : ""}
-            {mock ? " · mock data" : !serverMode ? " · session datasource" : ""}
+            {mock ? " · mock data" : !serverMode ? " · this dashboard’s datasource" : ""}
           </p>
         </div>
         <div className="controls">

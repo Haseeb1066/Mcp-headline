@@ -112,6 +112,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "hasOpenAi": bool(env("OPENAI_API_KEY")),
         "hasTableau": has_tableau_creds(),
+        "hasWebUi": WEB_DIST.is_dir() and (WEB_DIST / "index.html").is_file(),
         "model": env("OPENAI_MODEL", "gpt-4o-mini") if env("OPENAI_API_KEY") else None,
         "backend": "python",
         "service": "tableau-narrative",
