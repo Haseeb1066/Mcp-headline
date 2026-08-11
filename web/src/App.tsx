@@ -295,6 +295,20 @@ export function App() {
           return;
         }
 
+        // Tableau dashboard extension FIRST — session datasource only, never needs PAT
+        if (window.tableau?.extensions) {
+          const ctx = await initTableauExtension();
+          if (cancelled) return;
+          if (!ctx.datasources.length) {
+            throw new Error(
+              `No datasource found on dashboard “${ctx.dashboardName}”. Add a sheet that uses a datasource, then Refresh.`
+            );
+          }
+          setContext(ctx);
+          setActiveDatasource(pickSessionDatasource(ctx.datasources));
+          return;
+        }
+
         // Browser-only live test with ?contentUrl=... (uses PAT on the server)
         if (serverMode) {
           const contentUrl = queryParam("contentUrl");
@@ -339,18 +353,9 @@ export function App() {
           return;
         }
 
-        // Outside Tableau with no contentUrl: ask for a real workbook (no mock by default)
-        if (!window.tableau?.extensions) {
-          throw new Error(
-            "Open this as a Tableau dashboard extension, or pass a live workbook: ?contentUrl=Sales_AI-MCP"
-          );
-        }
-
-        // Tableau dashboard extension: datasource comes from the live session only
-        const ctx = await initTableauExtension();
-        if (cancelled) return;
-        setContext(ctx);
-        setActiveDatasource(pickSessionDatasource(ctx.datasources));
+        throw new Error(
+          "Open this as a Tableau dashboard extension (no PAT). It will use that dashboard’s datasource automatically."
+        );
       } catch (e) {
         if (!cancelled) {
           setBootError(e instanceof Error ? e.message : String(e));

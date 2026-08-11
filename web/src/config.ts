@@ -35,8 +35,11 @@ export function queryParam(name: string): string | null {
   return v?.trim() || null;
 }
 
-/** Live server test via ?contentUrl=... or ?datasource=... (no Tableau iframe). */
+/** Live server test via ?contentUrl=... (PAT). Disabled inside Tableau extension. */
 export function useServerContentMode(): boolean {
+  if (typeof window !== "undefined" && window.tableau?.extensions) {
+    return false;
+  }
   return Boolean(queryParam("contentUrl") || queryParam("datasource") || queryParam("workbookId"));
 }
 
