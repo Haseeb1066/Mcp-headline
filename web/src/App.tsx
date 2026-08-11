@@ -329,9 +329,9 @@ export function App() {
           if (cancelled) return;
 
           const viewsPayload = await fetchWorkbookViews(wb.id);
-          const viewNames = viewsPayload.views.map((v) => v.name);
+          const viewNames = (viewsPayload.views || []).map((v) => v?.name || "").filter(Boolean);
           const server = await fetchDatasources(wb.id);
-          let dashboardDs = server.datasources;
+          let dashboardDs = server.datasources || [];
           if (dsParam && !dashboardDs.some((d) => d.name === dsParam || d.id === dsParam)) {
             dashboardDs = [
               { id: "", name: dsParam, isPublished: true, source: "query" },
@@ -340,14 +340,14 @@ export function App() {
           }
 
           const ctx: ExtensionContext = {
-            workbookName: wb.name,
-            dashboardName: viewParam || viewNames[0] || wb.name || "Dashboard",
+            workbookName: wb?.name || contentUrl || "Workbook",
+            dashboardName: viewParam || viewNames[0] || wb?.name || "Dashboard",
             worksheetNames: viewNames,
             datasources: dashboardDs.length
               ? dashboardDs
-              : [{ id: "", name: wb.name, isPublished: true, source: "workbook" }],
+              : [{ id: "", name: wb?.name || "Workbook", isPublished: true, source: "workbook" }],
             workbook: wb,
-            contentUrl: wb.contentUrl || contentUrl,
+            contentUrl: wb?.contentUrl || contentUrl,
             source: "tableau",
           };
           setContext(ctx);

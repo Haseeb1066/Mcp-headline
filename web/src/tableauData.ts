@@ -72,21 +72,22 @@ function tableToPayload(
   context: ExtensionContext,
   datasource: DatasourceInfo
 ): TabularPayload {
-  const columns = table.columns.map((c) => ({
-    index: c.index,
-    fieldName: c.fieldName,
-    dataType: c.dataType,
-    name: c.fieldName,
+  const columns = (table.columns || []).map((c, i) => ({
+    index: c?.index ?? i,
+    fieldName: c?.fieldName || `Column ${i + 1}`,
+    dataType: c?.dataType || "string",
+    name: c?.fieldName || `Column ${i + 1}`,
   }));
-  const rows = table.data.map((row) => row.map(serializeCell));
+  const rows = (table.data || []).map((row) => (row || []).map(serializeCell));
+  const dsName = datasource?.name || "Datasource";
   return {
     columns,
     rows,
-    worksheetName: datasource.name,
+    worksheetName: dsName,
     dashboardName: context.dashboardName,
     workbookName: context.workbookName,
-    datasourceName: datasource.name,
-    datasourceLuid: datasource.id || undefined,
+    datasourceName: dsName,
+    datasourceLuid: datasource?.id || undefined,
     dataSource: "datasource",
   };
 }
@@ -104,24 +105,25 @@ export async function collectSessionDatasources(): Promise<SessionDatasource[]> 
   if (!ext) {
     throw new Error("Tableau Extensions API is not available.");
   }
-  const worksheets = ext.dashboardContent.dashboard.worksheets;
+  const worksheets = ext.dashboardContent?.dashboard?.worksheets || [];
   const byKey = new Map<string, SessionDatasource>();
 
   for (const ws of worksheets) {
+    if (!ws) continue;
     try {
       const sources = await ws.getDataSourcesAsync();
-      sources.forEach((ds, index) => {
-        const key = `${ds.id || ds.name}`.toLowerCase();
+      (sources || []).forEach((ds, index) => {
+        if (!ds) return;
+        const name = ds.name || `Datasource ${index + 1}`;
+        const key = `${ds.id || name}`.toLowerCase();
         if (!key || byKey.has(key)) return;
         byKey.set(key, {
           id: ds.id || "",
-          name: ds.name,
+          name,
           isPublished: ds.isPublished,
           isExtract: ds.isExtract,
           source: "extension",
-          // First datasource on a worksheet is the primary one by Tableau convention
-          worksheetName: ws.name,
-          ...(index === 0 ? {} : {}),
+          worksheetName: ws.name || "Worksheet",
         });
       });
     } catch {
@@ -140,13 +142,19 @@ export async function initTableauExtension(): Promise<ExtensionContext> {
     );
   }
   await ext.initializeAsync();
-  const dashboard = ext.dashboardContent.dashboard;
-  const worksheetNames = dashboard.worksheets.map((w) => w.name);
+  const dashboard = ext.dashboardContent?.dashboard;
+  if (!dashboard) {
+    throw new Error(
+      "Tableau extension initialized, but no dashboard context was found. Place this on a dashboard (not a worksheet)."
+    );
+  }
+  const worksheets = dashboard.worksheets || [];
+  const worksheetNames = worksheets.map((w) => w?.name || "").filter(Boolean);
   const datasources = await collectSessionDatasources();
 
   return {
-    workbookName: dashboard.workbook.name,
-    dashboardName: dashboard.name,
+    workbookName: dashboard.workbook?.name || "Workbook",
+    dashboardName: dashboard.name || "Dashboard",
     worksheetNames,
     datasources,
     workbook: null,
@@ -183,17 +191,19 @@ export async function loadSessionDatasourceTable(
     throw new Error("Tableau Extensions API is not available.");
   }
 
-  const worksheets = ext.dashboardContent.dashboard.worksheets;
+  const worksheets = ext.dashboardContent?.dashboard?.worksheets || [];
   let matchedSource: TableauDataSource | null = null;
   let matchedWorksheet: TableauWorksheet | null = null;
 
   for (const ws of worksheets) {
+    if (!ws) continue;
     try {
       const sources = await ws.getDataSourcesAsync();
-      const found = sources.find(
+      const found = (sources || []).find(
         (ds) =>
-          (datasource.id && ds.id === datasource.id) ||
-          ds.name === datasource.name
+          ds &&
+          ((datasource.id && ds.id === datasource.id) ||
+            ds.name === datasource.name)
       );
       if (found) {
         matchedSource = found;
@@ -220,7 +230,7 @@ export async function loadSessionDatasourceTable(
       });
       return tableToPayload(table, context, {
         ...datasource,
-        name: matchedSource.name,
+        name: matchedSource.name || datasource.name || "Datasource",
         id: matchedSource.id || datasource.id,
       });
     }
@@ -238,7 +248,7 @@ export async function loadSessionDatasourceTable(
       });
       return tableToPayload(table, context, {
         ...datasource,
-        name: matchedSource.name,
+        name: matchedSource.name || datasource.name || "Datasource",
         id: matchedSource.id || datasource.id,
       });
     } catch {
@@ -254,7 +264,7 @@ export async function loadSessionDatasourceTable(
   });
   return tableToPayload(summary, context, {
     ...datasource,
-    name: matchedSource.name,
+    name: matchedSource.name || datasource.name || "Datasource",
     id: matchedSource.id || datasource.id,
   });
 }
