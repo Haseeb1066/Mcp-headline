@@ -1,19 +1,39 @@
-"""Tableau REST: PAT sign-in, workbook resolve, datasource listing."""
+"""Tableau REST: Connected App JWT / PAT sign-in, workbook resolve, datasource listing."""
 
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
+import jwt
 
-from backend.config import env, has_tableau_creds, httpx_verify, require_env
+from backend.config import (
+    env,
+    has_tableau_connected_app,
+    has_tableau_creds,
+    has_tableau_pat,
+    httpx_verify,
+    require_env,
+    tableau_auth_mode,
+)
 
 DEFAULT_REST_VERSION = "3.27"
 LUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
+
+# Scopes for workbook/datasource/view access used by this service
+JWT_SCOPES = [
+    "tableau:content:read",
+    "tableau:workbooks:read",
+    "tableau:datasources:read",
+    "tableau:views:download",
+    "tableau:projects:read",
+]
 
 
 @dataclass
@@ -48,6 +68,54 @@ def _client() -> httpx.Client:
     return httpx.Client(verify=httpx_verify(), timeout=120.0)
 
 
+def _build_connected_app_jwt() -> str:
+    client_id = require_env("TABLEAU_CONNECTED_APP_CLIENT_ID")
+    secret_id = require_env("TABLEAU_CONNECTED_APP_SECRET_ID")
+    secret = require_env("TABLEAU_CONNECTED_APP_SECRET")
+    username = require_env("TABLEAU_JWT_SUB_CLAIM")
+    now = datetime.now(timezone.utc)
+    payload = {
+        "iss": client_id,
+        "exp": now + timedelta(minutes=5),
+        "jti": str(uuid.uuid4()),
+        "aud": "tableau",
+        "sub": username,
+        "scp": JWT_SCOPES,
+    }
+    return jwt.encode(
+        payload,
+        secret,
+        algorithm="HS256",
+        headers={"kid": secret_id, "iss": client_id},
+    )
+
+
+def sign_in_connected_app() -> tuple[str, str]:
+    url = f"{_server_base()}/api/{_rest_version()}/auth/signin"
+    token_jwt = _build_connected_app_jwt()
+    with _client() as client:
+        res = client.post(
+            url,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json={
+                "credentials": {
+                    "site": {"contentUrl": _site_content_url()},
+                    "jwt": token_jwt,
+                }
+            },
+        )
+    if not res.is_success:
+        raise RuntimeError(
+            f"Tableau Connected App sign-in failed ({res.status_code}): {res.text[:500]}"
+        )
+    j = res.json()
+    token = j.get("credentials", {}).get("token")
+    site_id = j.get("credentials", {}).get("site", {}).get("id") or ""
+    if not token:
+        raise RuntimeError("Tableau Connected App sign-in returned no token")
+    return token, site_id
+
+
 def sign_in_pat() -> tuple[str, str]:
     url = f"{_server_base()}/api/{_rest_version()}/auth/signin"
     with _client() as client:
@@ -63,29 +131,61 @@ def sign_in_pat() -> tuple[str, str]:
             },
         )
     if not res.is_success:
-        raise RuntimeError(f"Tableau sign-in failed ({res.status_code}): {res.text[:500]}")
+        raise RuntimeError(f"Tableau PAT sign-in failed ({res.status_code}): {res.text[:500]}")
     j = res.json()
     token = j.get("credentials", {}).get("token")
     site_id = j.get("credentials", {}).get("site", {}).get("id") or ""
     if not token:
-        raise RuntimeError("Tableau sign-in returned no token")
+        raise RuntimeError("Tableau PAT sign-in returned no token")
     return token, site_id
 
 
+def sign_in() -> tuple[str, str]:
+    """Prefer Connected App JWT; fall back to PAT."""
+    errors: list[str] = []
+    if has_tableau_connected_app():
+        try:
+            return sign_in_connected_app()
+        except Exception as e:
+            errors.append(f"connected_app: {e}")
+            if not has_tableau_pat():
+                raise
+    if has_tableau_pat():
+        try:
+            return sign_in_pat()
+        except Exception as e:
+            errors.append(f"pat: {e}")
+            raise RuntimeError("; ".join(errors)) from e
+    raise RuntimeError(
+        "Tableau credentials not configured. Set Connected App "
+        "(TABLEAU_CONNECTED_APP_* + TABLEAU_JWT_SUB_CLAIM) or PAT vars."
+    )
+
+
 def probe_tableau_sign_in() -> dict[str, Any]:
-    if not has_tableau_creds():
+    mode = tableau_auth_mode()
+    if mode == "none":
         return {
             "tableauSignInOk": False,
-            "tableauHint": "Set TABLEAU_SERVER, TABLEAU_PAT_NAME, TABLEAU_PAT_VALUE in .env",
+            "tableauAuthMode": mode,
+            "tableauHint": (
+                "Set Connected App vars (TABLEAU_CONNECTED_APP_CLIENT_ID/SECRET_ID/SECRET, "
+                "TABLEAU_JWT_SUB_CLAIM, TABLEAU_SERVER, TABLEAU_SITE_NAME) or PAT. "
+                "Dashboard extension session mode does not need these."
+            ),
         }
     try:
-        sign_in_pat()
-        return {"tableauSignInOk": True}
+        sign_in()
+        return {"tableauSignInOk": True, "tableauAuthMode": mode}
     except Exception as e:
         return {
             "tableauSignInOk": False,
+            "tableauAuthMode": mode,
             "tableauSignInError": str(e)[:300],
-            "tableauHint": "Regenerate PAT and confirm TABLEAU_SITE_NAME matches the site content URL.",
+            "tableauHint": (
+                "Check Connected App scopes/user (TABLEAU_JWT_SUB_CLAIM) and "
+                "TABLEAU_SITE_NAME, or regenerate PAT."
+            ),
         }
 
 
@@ -142,7 +242,7 @@ def resolve_workbook(
     content_url: str | None = None,
     project_name: str | None = None,
 ) -> WorkbookSummary:
-    token, site_id = sign_in_pat()
+    token, site_id = sign_in()
     workbooks = list_workbooks(token, site_id)
 
     if workbook_id:
@@ -187,7 +287,7 @@ def resolve_workbook(
 
 
 def list_workbook_connections(workbook_id: str) -> list[dict[str, Any]]:
-    token, site_id = sign_in_pat()
+    token, site_id = sign_in()
     url = (
         f"{_server_base()}/api/{_rest_version()}/sites/{site_id}"
         f"/workbooks/{workbook_id}/connections"
@@ -222,7 +322,7 @@ def list_workbook_connections(workbook_id: str) -> list[dict[str, Any]]:
 
 
 def list_published_datasources(*, page_size: int = 100) -> list[dict[str, Any]]:
-    token, site_id = sign_in_pat()
+    token, site_id = sign_in()
     out: list[dict[str, Any]] = []
     page = 1
     while True:
@@ -275,7 +375,7 @@ def fetch_datasource_fields(identifier: str) -> dict[str, Any]:
     id_val = identifier.strip()
     if not id_val:
         raise ValueError("identifier is empty")
-    token, _ = sign_in_pat()
+    token, _ = sign_in()
     by_luid = bool(LUID_RE.match(id_val))
     if by_luid:
         filt = "luid: $id"

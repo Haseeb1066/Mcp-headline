@@ -7,7 +7,7 @@ import json
 import os
 from typing import Any
 
-from backend.config import env, require_env
+from backend.config import env, has_tableau_pat, require_env
 from backend.mcp_stdio import McpStdioClient
 from backend.platform_fix import mcp_spawn_command
 
@@ -19,6 +19,12 @@ _MCP_KEYS = ("SERVER", "SITE_NAME", "PAT_NAME", "PAT_VALUE")
 
 
 def _build_mcp_env() -> dict[str, str]:
+    if not has_tableau_pat():
+        raise RuntimeError(
+            "Tableau MCP (query-datasource / get-view-data) requires PAT. "
+            "Set TABLEAU_PAT_NAME and TABLEAU_PAT_VALUE, or use the dashboard "
+            "extension session path (no server credentials)."
+        )
     mcp_env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
     mcp_env["SERVER"] = require_env("TABLEAU_SERVER")
     mcp_env["SITE_NAME"] = env("TABLEAU_SITE_NAME")

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from backend.config import env, has_tableau_creds
+from backend.config import env, has_tableau_creds, tableau_auth_mode
 from backend.datasource_narrative import fetch_datasource_table, list_datasources_via_mcp
 from backend.narrative import analyze_table
 from backend.polish import generate_insight_sections, polish_summary
@@ -112,6 +112,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "hasOpenAi": bool(env("OPENAI_API_KEY")),
         "hasTableau": has_tableau_creds(),
+        "tableauAuthMode": tableau_auth_mode(),
         "hasWebUi": WEB_DIST.is_dir() and (WEB_DIST / "index.html").is_file(),
         "model": env("OPENAI_MODEL", "gpt-4o-mini") if env("OPENAI_API_KEY") else None,
         "backend": "python",

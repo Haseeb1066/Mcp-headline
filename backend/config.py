@@ -43,5 +43,28 @@ def httpx_verify() -> bool:
     return raw not in ("0", "false", "no")
 
 
-def has_tableau_creds() -> bool:
+def has_tableau_connected_app() -> bool:
+    return bool(
+        env("TABLEAU_SERVER")
+        and env("TABLEAU_CONNECTED_APP_CLIENT_ID")
+        and env("TABLEAU_CONNECTED_APP_SECRET_ID")
+        and env("TABLEAU_CONNECTED_APP_SECRET")
+        and env("TABLEAU_JWT_SUB_CLAIM")
+    )
+
+
+def has_tableau_pat() -> bool:
     return bool(env("TABLEAU_SERVER") and env("TABLEAU_PAT_NAME") and env("TABLEAU_PAT_VALUE"))
+
+
+def has_tableau_creds() -> bool:
+    """True when Connected App (preferred) or PAT is configured for Tableau REST access."""
+    return has_tableau_connected_app() or has_tableau_pat()
+
+
+def tableau_auth_mode() -> str:
+    if has_tableau_connected_app():
+        return "connected_app"
+    if has_tableau_pat():
+        return "pat"
+    return "none"
