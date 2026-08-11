@@ -27,41 +27,38 @@ export function isLikelyTableauHost(): boolean {
 }
 
 /**
- * Wait for the Tableau Extensions API (script + host injection can be slow).
- * Retries loading the CDN script once if needed.
+ * Wait for the Tableau Extensions API.
+ * Prefer same-origin /tableau.extensions.min.js (avoids Tableau CSP blocking the CDN).
  */
-export async function waitForTableauExtensions(timeoutMs = 15000): Promise<boolean> {
+export async function waitForTableauExtensions(timeoutMs = 20000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-
   const ready = () => Boolean(window.tableau?.extensions);
   if (ready()) return true;
 
-  // Ensure CDN library is present (Tableau may also inject its own)
-  if (!document.querySelector("script[data-narrative-tableau-ext]")) {
-    await new Promise<void>((resolve) => {
-      const existing = document.querySelector(
-        'script[src*="tableau.extensions"]'
-      ) as HTMLScriptElement | null;
-      if (existing) {
-        if (ready()) {
-          resolve();
-          return;
-        }
-        existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener("error", () => resolve(), { once: true });
-        // Already loaded earlier
-        setTimeout(() => resolve(), 50);
+  const loadScript = (src: string) =>
+    new Promise<void>((resolve) => {
+      const found = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+      if (found) {
+        found.addEventListener("load", () => resolve(), { once: true });
+        found.addEventListener("error", () => resolve(), { once: true });
+        setTimeout(() => resolve(), 30);
         return;
       }
       const script = document.createElement("script");
-      script.src = "https://extensions.tableau.com/tableau.extensions.1.latest.min.js";
+      script.src = src;
       script.async = true;
       script.dataset.narrativeTableauExt = "1";
       script.onload = () => resolve();
       script.onerror = () => resolve();
       document.head.appendChild(script);
     });
-  }
+
+  // 1) Same-origin copy (works when extensions.tableau.com is blocked by CSP)
+  await loadScript("/tableau.extensions.min.js");
+  if (ready()) return true;
+
+  // 2) Official CDN fallback
+  await loadScript("https://extensions.tableau.com/tableau.extensions.1.latest.min.js");
 
   while (Date.now() < deadline) {
     if (ready()) return true;

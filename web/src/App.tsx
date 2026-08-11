@@ -361,9 +361,10 @@ export function App() {
 
         if (isLikelyTableauHost()) {
           throw new Error(
-            "Tableau opened this page, but the Extensions API did not load. " +
-              "Allowlist https://mcp-headline.onrender.com/ and https://extensions.tableau.com in Tableau " +
-              "Settings → Extensions / CSP, then remove and re-add the .trex on the dashboard."
+            "Tableau opened this page, but the Extensions API did not initialize. " +
+              "In Tableau Settings → Extensions, allowlist https://mcp-headline.onrender.com/ " +
+              "(full URL, with https). Then remove the extension from the dashboard and add NarrativeInsights.trex again. " +
+              "If your site uses a strict CSP, allow this extension’s domain for scripts."
           );
         }
 
