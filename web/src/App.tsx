@@ -11,8 +11,10 @@ import { queryParam, useMockMode, useServerContentMode } from "./config";
 import { getMockContext, getMockDatasourceTable } from "./mockData";
 import {
   initTableauExtension,
+  isLikelyTableauHost,
   loadSessionDatasourceTable,
   pickSessionDatasource,
+  waitForTableauExtensions,
 } from "./tableauData";
 import type {
   DatasourceInfo,
@@ -295,8 +297,12 @@ export function App() {
           return;
         }
 
-        // Tableau dashboard extension FIRST — session datasource only, never needs PAT
-        if (window.tableau?.extensions) {
+        // Wait for Tableau Extensions API (CDN / host injection can lag)
+        const hasExtensions = await waitForTableauExtensions(15000);
+        if (cancelled) return;
+
+        // Tableau dashboard extension — session datasource only, never needs PAT
+        if (hasExtensions && window.tableau?.extensions) {
           const ctx = await initTableauExtension();
           if (cancelled) return;
           if (!ctx.datasources.length) {
@@ -309,7 +315,7 @@ export function App() {
           return;
         }
 
-        // Browser-only live test with ?contentUrl=... (uses PAT on the server)
+        // Browser-only live test with ?contentUrl=... (uses server Tableau creds)
         if (serverMode) {
           const contentUrl = queryParam("contentUrl");
           const workbookId = queryParam("workbookId");
@@ -353,8 +359,18 @@ export function App() {
           return;
         }
 
+        if (isLikelyTableauHost()) {
+          throw new Error(
+            "Tableau opened this page, but the Extensions API did not load. " +
+              "Allowlist https://mcp-headline.onrender.com/ and https://extensions.tableau.com in Tableau " +
+              "Settings → Extensions / CSP, then remove and re-add the .trex on the dashboard."
+          );
+        }
+
         throw new Error(
-          "Open this as a Tableau dashboard extension (no PAT). It will use that dashboard’s datasource automatically."
+          "This URL must be opened inside a Tableau dashboard extension (not a normal browser tab). " +
+            "In Tableau: Dashboard → Extension → select NarrativeInsights.trex " +
+            "(URL https://mcp-headline.onrender.com/)."
         );
       } catch (e) {
         if (!cancelled) {

@@ -11,6 +11,65 @@ function serializeCell(value: TableauDataValue): string | number | boolean | nul
   return text;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True when this page is likely hosted inside Tableau (iframe). */
+export function isLikelyTableauHost(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.tableau?.extensions) return true;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Wait for the Tableau Extensions API (script + host injection can be slow).
+ * Retries loading the CDN script once if needed.
+ */
+export async function waitForTableauExtensions(timeoutMs = 15000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  const ready = () => Boolean(window.tableau?.extensions);
+  if (ready()) return true;
+
+  // Ensure CDN library is present (Tableau may also inject its own)
+  if (!document.querySelector("script[data-narrative-tableau-ext]")) {
+    await new Promise<void>((resolve) => {
+      const existing = document.querySelector(
+        'script[src*="tableau.extensions"]'
+      ) as HTMLScriptElement | null;
+      if (existing) {
+        if (ready()) {
+          resolve();
+          return;
+        }
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => resolve(), { once: true });
+        // Already loaded earlier
+        setTimeout(() => resolve(), 50);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://extensions.tableau.com/tableau.extensions.1.latest.min.js";
+      script.async = true;
+      script.dataset.narrativeTableauExt = "1";
+      script.onload = () => resolve();
+      script.onerror = () => resolve();
+      document.head.appendChild(script);
+    });
+  }
+
+  while (Date.now() < deadline) {
+    if (ready()) return true;
+    await sleep(150);
+  }
+  return ready();
+}
+
 function tableToPayload(
   table: TableauDataTable,
   context: ExtensionContext,
