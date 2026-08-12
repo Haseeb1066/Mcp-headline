@@ -171,6 +171,12 @@ function InsightSections({
   const pauseRef = useRef(false);
   const userScrollUntil = useRef(0);
   const programmaticScroll = useRef(false);
+  const [paused, setPaused] = useState(false);
+
+  const setHoverPaused = useCallback((next: boolean) => {
+    pauseRef.current = next;
+    setPaused(next);
+  }, []);
 
   const track = (
     <>
@@ -200,12 +206,12 @@ function InsightSections({
 
     let frame = 0;
     let last = performance.now();
-    const speed = 28; // px / sec
+    const speed = 42; // px / sec — noticeable in Tableau iframe
 
     const wrapIfNeeded = () => {
       const half = el.scrollHeight / 2;
       if (half <= 0) return;
-      if (el.scrollTop >= half) {
+      if (el.scrollTop >= half - 1) {
         programmaticScroll.current = true;
         el.scrollTop -= half;
         programmaticScroll.current = false;
@@ -217,10 +223,10 @@ function InsightSections({
     };
 
     const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const dt = Math.min(0.064, (now - last) / 1000);
       last = now;
-      const paused = pauseRef.current || now < userScrollUntil.current;
-      if (!paused) {
+      const isPaused = pauseRef.current || now < userScrollUntil.current;
+      if (!isPaused) {
         programmaticScroll.current = true;
         el.scrollTop += speed * dt;
         wrapIfNeeded();
@@ -235,31 +241,45 @@ function InsightSections({
 
   return (
     <div className="insight-scroll-shell">
-      <p className="insight-scroll-hint">
-        Auto-scroll pauses on hover · use the scrollbar to scroll manually
-      </p>
+      <div className="insight-scroll-bar">
+        <p className="insight-scroll-hint">
+          Auto-scrolls through insights · hover or place cursor to pause
+        </p>
+        <span className={`insight-scroll-status${paused ? " is-paused" : ""}`}>
+          {paused ? "Paused" : "Scrolling"}
+        </span>
+      </div>
       <div
-        className="insight-marquee"
+        className={`insight-marquee${paused ? " is-paused" : ""}`}
         ref={scrollerRef}
         aria-label="Insights auto-scroll. Hover to pause. Use scrollbar to scroll manually."
-        onMouseEnter={() => {
-          pauseRef.current = true;
-        }}
-        onMouseLeave={() => {
-          pauseRef.current = false;
+        onPointerEnter={() => setHoverPaused(true)}
+        onPointerLeave={() => setHoverPaused(false)}
+        onMouseEnter={() => setHoverPaused(true)}
+        onMouseLeave={() => setHoverPaused(false)}
+        onFocusCapture={() => setHoverPaused(true)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setHoverPaused(false);
+          }
         }}
         onWheel={() => {
           userScrollUntil.current = performance.now() + 3500;
         }}
+        onTouchStart={() => setHoverPaused(true)}
+        onTouchEnd={() => {
+          userScrollUntil.current = performance.now() + 2500;
+          setHoverPaused(false);
+        }}
         onScroll={() => {
           if (programmaticScroll.current) return;
           userScrollUntil.current = performance.now() + 3500;
-          const el = scrollerRef.current;
-          if (!el) return;
-          const half = el.scrollHeight / 2;
-          if (half > 0 && el.scrollTop >= half) {
+          const node = scrollerRef.current;
+          if (!node) return;
+          const half = node.scrollHeight / 2;
+          if (half > 0 && node.scrollTop >= half - 1) {
             programmaticScroll.current = true;
-            el.scrollTop -= half;
+            node.scrollTop -= half;
             programmaticScroll.current = false;
           }
         }}

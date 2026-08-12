@@ -401,10 +401,34 @@ section h2 {
   gap: 8px;
 }
 
+.insight-scroll-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .insight-scroll-hint {
   margin: 0;
   font-size: 0.78rem;
   color: var(--muted);
+}
+
+.insight-scroll-status {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(26, 77, 109, 0.1);
+  border-radius: 999px;
+  padding: 4px 9px;
+}
+
+.insight-scroll-status.is-paused {
+  color: var(--warn);
+  background: rgba(183, 120, 28, 0.14);
 }
 
 .insight-marquee {
@@ -420,6 +444,12 @@ section h2 {
   scrollbar-width: auto;
   scrollbar-color: var(--accent) rgba(26, 77, 109, 0.12);
   overscroll-behavior: contain;
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.insight-marquee.is-paused {
+  border-color: rgba(183, 120, 28, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(183, 120, 28, 0.18), var(--shadow);
 }
 
 .insight-marquee::-webkit-scrollbar {
