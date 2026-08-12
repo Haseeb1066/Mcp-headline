@@ -317,6 +317,7 @@ def generate_insight_sections(
             "Invoice Date MoM/QoQ/YoY figures are invoice-volume / timing signals — cite numbers exactly when provided, "
             "but do not call them collections, cash saved, or spend reduction. "
             "When quantitative.headline or quantitative.pointers are present, weave 2-4 of those numbered deltas into insights. "
+            "When outlierAnalysis / quantitative.outliers are present, include a short outliers callout with exact values. "
             "Prioritize unpaid (Cleared=N) risk, overdue aging, and top unpaid creditors. "
             "Do not use markdown."
         )
@@ -334,6 +335,7 @@ def generate_insight_sections(
             "Each insight must cite concrete numbers, explain why it matters, and recommend a practical next step. "
             "Do not invent causes; label plausible causes as investigation items. "
             "When quantitative.headline or quantitative.pointers are present, weave 2-4 of those numbered deltas into insights. "
+            "When outlierAnalysis / quantitative.outliers are present, include a short outliers callout with exact values. "
             "Do not use markdown."
         )
     try:
