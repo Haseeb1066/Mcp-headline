@@ -15,6 +15,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Safe string from Tableau objects that may omit `.name` entirely. */
+function safeName(value: unknown, fallback: string): string {
+  if (value == null) return fallback;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === "object" && "name" in value) {
+    const name = (value as { name?: unknown }).name;
+    if (typeof name === "string" && name.trim()) return name.trim();
+  }
+  return fallback;
+}
+
 /** True when this page is likely hosted inside Tableau (iframe). */
 export function isLikelyTableauHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -114,7 +128,7 @@ export async function collectSessionDatasources(): Promise<SessionDatasource[]> 
       const sources = await ws.getDataSourcesAsync();
       (sources || []).forEach((ds, index) => {
         if (!ds) return;
-        const name = ds.name || `Datasource ${index + 1}`;
+        const name = safeName(ds, `Datasource ${index + 1}`);
         const key = `${ds.id || name}`.toLowerCase();
         if (!key || byKey.has(key)) return;
         byKey.set(key, {
@@ -123,7 +137,7 @@ export async function collectSessionDatasources(): Promise<SessionDatasource[]> 
           isPublished: ds.isPublished,
           isExtract: ds.isExtract,
           source: "extension",
-          worksheetName: ws.name || "Worksheet",
+          worksheetName: safeName(ws, "Worksheet"),
         });
       });
     } catch {
@@ -149,12 +163,15 @@ export async function initTableauExtension(): Promise<ExtensionContext> {
     );
   }
   const worksheets = dashboard.worksheets || [];
-  const worksheetNames = worksheets.map((w) => w?.name || "").filter(Boolean);
+  const worksheetNames = worksheets
+    .map((w) => safeName(w, ""))
+    .filter(Boolean);
   const datasources = await collectSessionDatasources();
 
+  // `dashboard.workbook` is undefined on many Desktop builds — never read `.name` bare.
   return {
-    workbookName: dashboard.workbook?.name || "Workbook",
-    dashboardName: dashboard.name || "Dashboard",
+    workbookName: safeName(dashboard.workbook, "Workbook"),
+    dashboardName: safeName(dashboard, "Dashboard"),
     worksheetNames,
     datasources,
     workbook: null,
@@ -230,7 +247,7 @@ export async function loadSessionDatasourceTable(
       });
       return tableToPayload(table, context, {
         ...datasource,
-        name: matchedSource.name || datasource.name || "Datasource",
+        name: safeName(matchedSource, datasource.name || "Datasource"),
         id: matchedSource.id || datasource.id,
       });
     }
@@ -248,7 +265,7 @@ export async function loadSessionDatasourceTable(
       });
       return tableToPayload(table, context, {
         ...datasource,
-        name: matchedSource.name || datasource.name || "Datasource",
+        name: safeName(matchedSource, datasource.name || "Datasource"),
         id: matchedSource.id || datasource.id,
       });
     } catch {
@@ -264,7 +281,7 @@ export async function loadSessionDatasourceTable(
   });
   return tableToPayload(summary, context, {
     ...datasource,
-    name: matchedSource.name || datasource.name || "Datasource",
+    name: safeName(matchedSource, datasource.name || "Datasource"),
     id: matchedSource.id || datasource.id,
   });
 }

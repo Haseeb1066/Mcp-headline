@@ -391,7 +391,7 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      const dsName = activeDatasource.name;
+      const dsName = activeDatasource.name || "Datasource";
       let narrative: NarrativeResult;
 
       if (mock) {

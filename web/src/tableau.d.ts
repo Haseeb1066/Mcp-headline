@@ -64,7 +64,8 @@ interface TableauWorksheet {
 
 interface TableauDashboard {
   readonly name: string;
-  readonly workbook: { readonly name: string };
+  /** Not always present on all Tableau Desktop / Server builds. */
+  readonly workbook?: { readonly name?: string } | null;
   readonly worksheets: ReadonlyArray<TableauWorksheet>;
 }
 
