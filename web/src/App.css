@@ -434,45 +434,32 @@ section h2 {
 .insight-marquee {
   position: relative;
   height: min(62vh, 560px);
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 252, 246, 0.45);
   box-shadow: var(--shadow);
-  scrollbar-gutter: stable;
-  scrollbar-width: auto;
-  scrollbar-color: var(--accent) rgba(26, 77, 109, 0.12);
   overscroll-behavior: contain;
   transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+
+/* Auto-scroll only — hide native scrollbar / manual scroll chrome */
+.insight-marquee-auto {
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.insight-marquee-auto::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .insight-marquee.is-paused {
   border-color: rgba(183, 120, 28, 0.45);
   box-shadow: inset 0 0 0 1px rgba(183, 120, 28, 0.18), var(--shadow);
-}
-
-.insight-marquee::-webkit-scrollbar {
-  width: 10px;
-}
-
-.insight-marquee::-webkit-scrollbar-track {
-  background: rgba(26, 77, 109, 0.08);
-  border-radius: 999px;
-  margin: 6px 0;
-}
-
-.insight-marquee::-webkit-scrollbar-thumb {
-  background: var(--accent);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-.insight-marquee::-webkit-scrollbar-thumb:hover {
-  background: #163d56;
-  background-clip: content-box;
-  border: 2px solid transparent;
 }
 
 .insight-marquee-track {

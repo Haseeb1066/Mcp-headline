@@ -113,6 +113,74 @@ def _fmt_num(n: float) -> str:
     return f"{n:,.2f}"
 
 
+def _clean_field_name(name: str) -> str:
+    text = str(name or "").strip()
+    # Tableau often wraps calcs as AGG(Field Name) / SUM(Field Name)
+    for prefix in ("agg(", "sum(", "avg(", "min(", "max(", "cnt(", "countd(", "count("):
+        low = text.lower()
+        if low.startswith(prefix) and text.endswith(")"):
+            text = text[len(prefix) : -1].strip()
+            break
+    return text
+
+
+def _is_noise_measure_name(name: str) -> bool:
+    low = _clean_field_name(name).lower().replace(" ", "")
+    if not low:
+        return True
+    noise = (
+        "placeholder",
+        "pplaceholder",
+        "measurevalues",
+        "measure names",
+        "numberofreconds",
+        "numberofrecords",
+        "latitude",
+        "longitude",
+        "lat",
+        "lon",
+        "generated",
+    )
+    return any(tok in low for tok in noise)
+
+
+def _measure_priority(name: str) -> int:
+    """Higher is better for primary analytics measure."""
+    if _is_noise_measure_name(name):
+        return -100
+    low = _clean_field_name(name).lower()
+    score = 0
+    # Strong signal: monetary / volume facts
+    for token, pts in (
+        ("outstanding amount", 40),
+        ("overdue amount", 40),
+        ("sales", 36),
+        ("revenue", 36),
+        ("profit", 32),
+        ("amount", 28),
+        ("balance", 22),
+        ("payable", 18),
+        ("receivable", 18),
+        ("invoice", 14),
+        ("overdue", 14),
+        ("outstanding", 10),
+        ("quantity", 12),
+        ("qty", 12),
+        ("cost", 12),
+        ("total", 8),
+        ("value", 8),
+    ):
+        if token in low:
+            score += pts
+    # Aggregated entity counts are weak primary measures
+    if any(tok in low for tok in ("creditor", "customer", "vendor", "supplier")) and "amount" not in low:
+        score -= 20
+    if low.startswith("agg(") or name.strip().upper().startswith("AGG("):
+        score -= 8
+    if "count" in low or low in {"cnt", "records"}:
+        score -= 6
+    return score
+
 def _classify_columns(columns: list[dict[str, Any]], rows: list[list[Any]]) -> dict[str, Any]:
     measures: list[dict[str, Any]] = []
     dimensions: list[dict[str, Any]] = []
@@ -120,7 +188,8 @@ def _classify_columns(columns: list[dict[str, Any]], rows: list[list[Any]]) -> d
 
     for col in columns:
         idx = int(col["index"])
-        name = str(col.get("fieldName") or col.get("name") or f"col_{idx}")
+        raw_name = str(col.get("fieldName") or col.get("name") or f"col_{idx}")
+        name = _clean_field_name(raw_name)
         data_type = str(col.get("dataType") or "").lower()
         sample = [r[idx] if idx < len(r) else None for r in rows[:200]]
 
@@ -153,14 +222,17 @@ def _classify_columns(columns: list[dict[str, Any]], rows: list[list[Any]]) -> d
             and num_hits / max(non_null, 1) >= 0.85
         )
 
-        meta = {"index": idx, "name": name, "dataType": data_type}
+        meta = {"index": idx, "name": name, "rawName": raw_name, "dataType": data_type}
         if looks_date:
             dates.append(meta)
         elif looks_measure:
-            measures.append(meta)
+            if not _is_noise_measure_name(name):
+                measures.append(meta)
+            # else drop placeholders / junk numerics from analytics
         else:
             dimensions.append(meta)
 
+    measures.sort(key=lambda m: (-_measure_priority(m["name"]), m["name"]))
     return {"measures": measures, "dimensions": dimensions, "dates": dates}
 
 
@@ -1023,7 +1095,13 @@ def analyze_table(
         date_range = (date_profiles[0]["minDate"], date_profiles[0]["maxDate"])
 
     kpis: list[dict[str, Any]] = []
-    for p in measure_profiles[:4]:
+    for p in measure_profiles[:6]:
+        if _is_noise_measure_name(str(p.get("name") or "")):
+            continue
+        # Skip constant/zero-information measures
+        if p.get("min") is not None and p.get("max") is not None and p["min"] == p["max"]:
+            if len(rows) < 3:
+                continue
         kpi: dict[str, Any] = {
             "name": p["name"],
             "value": p.get("sum", p.get("mean")),
@@ -1042,6 +1120,8 @@ def analyze_table(
             kpi["yoyPct"] = yoy.get("pctChange")
             kpi["yoyDelta"] = yoy.get("delta")
         kpis.append(kpi)
+        if len(kpis) >= 4:
+            break
 
     summary = _build_template_summary(
         worksheet_name,
@@ -1053,15 +1133,21 @@ def analyze_table(
     )
 
     notes: list[str] = []
+    if len(rows) < 5:
+        notes.append(
+            "Very few rows were available from this dashboard view. "
+            "Allow Full Data for the extension and ensure sheets expose detail marks "
+            "(not only a single aggregated number) so MoM/YoY and outlier analysis can run."
+        )
     if not primary_date:
         notes.append("No date field detected — month/year comparisons are unavailable.")
     else:
         notes.append(f"Period comparisons use date field “{primary_date['name']}”.")
     if not primary_measure:
-        notes.append("No numeric measure detected — KPI totals are limited.")
+        notes.append("No usable numeric measure detected — KPI analytics are limited.")
     if len(rows) == 0:
         notes.append("Worksheet returned no summary rows (check filters).")
-    notes.append("Insights use dashboard summary data and respect current filters.")
+    notes.append("Insights use dashboard session data and respect current filters.")
 
     value_pointers: list[dict[str, Any]] = []
     for kpi in kpis:

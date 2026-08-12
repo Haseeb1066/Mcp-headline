@@ -81,71 +81,38 @@ function highlightInsightText(text: string, explicitDirection?: string | null): 
   return nodes.length ? nodes : text;
 }
 
+function isNoiseLabel(name: string | null | undefined): boolean {
+  const low = (name || "").toLowerCase().replace(/\s+/g, "");
+  return (
+    !low ||
+    low.includes("placeholder") ||
+    low.includes("pplaceholder") ||
+    low.includes("measurevalues") ||
+    low.includes("measurenames")
+  );
+}
+
 function quantitativeSections(result: NarrativeResult): InsightSection[] {
   const quantitative = result.quantitative;
   const sections: InsightSection[] = [];
+  const rowCount = result.context?.rowCount ?? 0;
 
-  const contextBits = [
-    quantitative?.measure,
-    quantitative?.dateField ? `by ${quantitative.dateField}` : null,
-    quantitative?.asOf ? `as of ${quantitative.asOf}` : null,
-    result.context?.rowCount != null ? `${result.context.rowCount.toLocaleString()} rows` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  const valueInsights: InsightItem[] = [];
-  if (contextBits) {
-    valueInsights.push({
-      text: `Full quantitative basis: ${contextBits}.`,
-      severity: "info",
+  if (rowCount > 0 && rowCount < 5) {
+    sections.push({
+      title: "Data Coverage",
+      insights: [
+        {
+          text:
+            `Only ${rowCount} row(s) were available from this dashboard view, so period and outlier analytics are limited. ` +
+            `Allow Full Data for the extension and use sheets with mark-level detail (amounts by creditor/date), not a single aggregated number.`,
+          severity: "warning",
+        },
+        ...(result.notes || []).slice(0, 2).map((note) => ({
+          text: note,
+          severity: "info" as const,
+        })),
+      ],
     });
-  }
-  for (const kpi of result.kpis || []) {
-    const parts = [`${kpi.name}: ${kpi.formatted}`];
-    if (kpi.momPct != null) {
-      parts.push(
-        `MoM ${kpi.momPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.momPct).toFixed(1)}%` +
-          (kpi.momDelta != null ? ` (${kpi.momDelta >= 0 ? "+" : ""}${kpi.momDelta.toLocaleString()})` : "")
-      );
-    }
-    if (kpi.qoqPct != null) {
-      parts.push(`QoQ ${kpi.qoqPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.qoqPct).toFixed(1)}%`);
-    }
-    if (kpi.yoyPct != null) {
-      parts.push(`YoY ${kpi.yoyPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.yoyPct).toFixed(1)}%`);
-    }
-    if (kpi.min != null && kpi.max != null) {
-      parts.push(`range ${kpi.min.toLocaleString()} → ${kpi.max.toLocaleString()}`);
-    }
-    valueInsights.push({
-      text: parts.join(" · ") + ".",
-      severity:
-        (kpi.momPct != null && Math.abs(kpi.momPct) >= 10) ||
-        (kpi.yoyPct != null && Math.abs(kpi.yoyPct) >= 10)
-          ? "warning"
-          : "info",
-      direction:
-        (kpi.momPct ?? kpi.yoyPct ?? 0) > 0
-          ? "up"
-          : (kpi.momPct ?? kpi.yoyPct ?? 0) < 0
-            ? "down"
-            : "flat",
-    });
-  }
-  for (const block of quantitative?.headline || []) {
-    valueInsights.push({
-      text:
-        block.pointer ||
-        `${block.label}: ${block.current.toLocaleString()} vs ${block.previous.toLocaleString()} ` +
-          `(${block.direction === "up" ? "↑" : block.direction === "down" ? "↓" : "→"} ` +
-          `${Math.abs(block.pctChange ?? 0).toFixed(1)}%).`,
-      severity: block.pctChange != null && Math.abs(block.pctChange) >= 10 ? "warning" : "info",
-      direction: block.direction,
-    });
-  }
-  if (valueInsights.length) {
-    sections.push({ title: "Quantitative Values", insights: valueInsights });
   }
 
   const grouped = new Map<string, InsightItem[]>([
@@ -156,6 +123,7 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
 
   for (const pointer of quantitative?.pointers || []) {
     if (pointer.periodType === "value" || pointer.periodType === "outlier") continue;
+    if (isNoiseLabel(pointer.text)) continue;
     const title =
       pointer.periodType === "monthly"
         ? "Monthly Quantitative Analysis"
@@ -173,7 +141,6 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
     });
   }
 
-  // Fill monthly/quarterly with full change series when pointers alone are thin
   const monthlyBucket = grouped.get("Monthly Quantitative Analysis")!;
   if (monthlyBucket.length < 4) {
     for (const change of (quantitative?.monthlyChanges || []).slice(-8)) {
@@ -202,12 +169,56 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
     sections.push({ title, insights });
   }
 
+  // Headline period comparisons as a dedicated analytics block (not raw KPI ranges)
+  const headlineInsights: InsightItem[] = [];
+  for (const block of quantitative?.headline || []) {
+    if (!block || isNoiseLabel(block.measure)) continue;
+    headlineInsights.push({
+      text:
+        block.pointer ||
+        `${block.label}: ${block.current.toLocaleString()} vs ${block.previous.toLocaleString()} ` +
+          `(${block.direction === "up" ? "↑" : block.direction === "down" ? "↓" : "→"} ` +
+          `${Math.abs(block.pctChange ?? 0).toFixed(1)}%).`,
+      severity: block.pctChange != null && Math.abs(block.pctChange) >= 10 ? "warning" : "info",
+      direction: block.direction,
+    });
+  }
+  for (const kpi of result.kpis || []) {
+    if (isNoiseLabel(kpi.name)) continue;
+    if (kpi.momPct == null && kpi.qoqPct == null && kpi.yoyPct == null) continue;
+    const parts = [`${kpi.name}: ${kpi.formatted}`];
+    if (kpi.momPct != null) {
+      parts.push(`MoM ${kpi.momPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.momPct).toFixed(1)}%`);
+    }
+    if (kpi.qoqPct != null) {
+      parts.push(`QoQ ${kpi.qoqPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.qoqPct).toFixed(1)}%`);
+    }
+    if (kpi.yoyPct != null) {
+      parts.push(`YoY ${kpi.yoyPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.yoyPct).toFixed(1)}%`);
+    }
+    headlineInsights.push({
+      text: parts.join(" · ") + ".",
+      severity:
+        (kpi.momPct != null && Math.abs(kpi.momPct) >= 10) ||
+        (kpi.yoyPct != null && Math.abs(kpi.yoyPct) >= 10)
+          ? "warning"
+          : "info",
+      direction:
+        (kpi.momPct ?? kpi.yoyPct ?? 0) > 0
+          ? "up"
+          : (kpi.momPct ?? kpi.yoyPct ?? 0) < 0
+            ? "down"
+            : "flat",
+    });
+  }
+  if (headlineInsights.length) {
+    sections.unshift({ title: "Period Analytics", insights: headlineInsights });
+  }
+
   const outlier = quantitative?.outliers || result.outlierAnalysis;
   const outlierInsights: InsightItem[] = [];
-  if (outlier?.note && !(outlier.pointers || []).length) {
-    outlierInsights.push({ text: outlier.note, severity: "info" });
-  }
   for (const pointer of outlier?.pointers || []) {
+    if (/Full quantitative basis|range .+ →/i.test(pointer.text)) continue;
     outlierInsights.push({
       text: pointer.text,
       severity:
@@ -227,12 +238,14 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
       direction: item.direction === "high" ? "up" : "down",
     });
   }
-  if (outlierInsights.length) {
+  // Only show outlier section when there is real signal (or enough rows)
+  if (outlierInsights.length && (rowCount >= 5 || (outlier?.outliers || []).length > 0)) {
     sections.push({ title: "Outlier Analysis", insights: outlierInsights });
   }
 
   const fullInsights: InsightItem[] = [];
   for (const driver of (result.topDrivers || []).slice(0, 5)) {
+    if (isNoiseLabel(driver.measure) || isNoiseLabel(driver.value)) continue;
     fullInsights.push({
       text:
         `${driver.dimension} “${driver.value}”: ${driver.total.toLocaleString()} ` +
@@ -242,11 +255,11 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
     });
   }
   for (const h of result.highlights || []) {
-    if (h.category === "outlier") continue; // already in Outlier Analysis
+    if (h.category === "outlier") continue;
+    if (/range .+ →|Full quantitative basis|pPlaceholder|placeholder/i.test(h.text)) continue;
     fullInsights.push({
       text: h.text,
-      severity:
-        h.severity === "high" ? "warning" : h.severity === "low" ? "info" : "info",
+      severity: h.severity === "high" ? "warning" : "info",
       direction: /increased|grew|up|ahead/i.test(h.text)
         ? "up"
         : /decreased|declined|down|behind/i.test(h.text)
@@ -256,6 +269,20 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
   }
   if (fullInsights.length) {
     sections.push({ title: "Full Analysis", insights: fullInsights });
+  }
+
+  if (!sections.length) {
+    sections.push({
+      title: "Analytics",
+      insights: [
+        {
+          text:
+            "No comparative analytics could be generated from the current dashboard marks. " +
+            "Allow Full Data and ensure the dashboard exposes amount/date fields across multiple rows.",
+          severity: "warning",
+        },
+      ],
+    });
   }
 
   return sections;
@@ -376,17 +403,15 @@ function InsightSections({
   return (
     <div className="insight-scroll-shell">
       <div className="insight-scroll-bar">
-        <p className="insight-scroll-hint">
-          Auto-scrolls through insights · hover or place cursor to pause
-        </p>
+        <p className="insight-scroll-hint">Auto-scroll · hover to pause</p>
         <span className={`insight-scroll-status${paused ? " is-paused" : ""}`}>
           {paused ? "Paused" : "Scrolling"}
         </span>
       </div>
       <div
-        className={`insight-marquee${paused ? " is-paused" : ""}`}
+        className={`insight-marquee insight-marquee-auto${paused ? " is-paused" : ""}`}
         ref={scrollerRef}
-        aria-label="Insights auto-scroll. Hover to pause. Use scrollbar to scroll manually."
+        aria-label="Insights auto-scroll. Hover to pause."
         onPointerEnter={() => setHoverPaused(true)}
         onPointerLeave={() => setHoverPaused(false)}
         onMouseEnter={() => setHoverPaused(true)}
@@ -397,25 +422,10 @@ function InsightSections({
             setHoverPaused(false);
           }
         }}
-        onWheel={() => {
-          userScrollUntil.current = performance.now() + 3500;
-        }}
         onTouchStart={() => setHoverPaused(true)}
         onTouchEnd={() => {
           userScrollUntil.current = performance.now() + 2500;
           setHoverPaused(false);
-        }}
-        onScroll={() => {
-          if (programmaticScroll.current) return;
-          userScrollUntil.current = performance.now() + 3500;
-          const node = scrollerRef.current;
-          if (!node) return;
-          const half = node.scrollHeight / 2;
-          if (half > 0 && node.scrollTop >= half - 1) {
-            programmaticScroll.current = true;
-            node.scrollTop -= half;
-            programmaticScroll.current = false;
-          }
         }}
       >
         <div className="insight-marquee-track">
