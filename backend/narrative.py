@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from statistics import mean, pstdev
+from statistics import mean, median, pstdev, quantiles
 from typing import Any, Optional
 
 try:
@@ -570,37 +570,216 @@ def _outlier_highlights(
     measure: dict[str, Any],
     dim: Optional[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    analysis = _outlier_analysis(rows, measure, dim)
+    return list(analysis.get("highlights") or [])
+
+
+def _outlier_analysis(
+    rows: list[list[Any]],
+    measure: dict[str, Any],
+    dim: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    """Full outlier / distribution analysis for the primary measure."""
+    empty = {
+        "measure": measure["name"],
+        "dimension": dim["name"] if dim else None,
+        "method": "zscore+iqr",
+        "sampleSize": 0,
+        "stats": None,
+        "outliers": [],
+        "pointers": [],
+        "highlights": [],
+        "note": "Not enough numeric values for outlier analysis.",
+    }
     pairs: list[tuple[str, float]] = []
     for i, row in enumerate(rows):
         n = _to_float(row[measure["index"]] if measure["index"] < len(row) else None)
         if n is None:
             continue
         label = str(row[dim["index"]]) if dim and dim["index"] < len(row) else f"row {i + 1}"
+        if label.strip() == "" or label.lower() in ("null", "none", "nan"):
+            label = f"row {i + 1}"
         pairs.append((label, n))
+
     if len(pairs) < 5:
-        return []
+        empty["sampleSize"] = len(pairs)
+        return empty
+
+    # Aggregate duplicate dimension labels so outliers reflect entity totals
+    if dim:
+        totals: dict[str, float] = defaultdict(float)
+        for lab, v in pairs:
+            totals[lab] += v
+        pairs = list(totals.items())
+
+    if len(pairs) < 5:
+        empty["sampleSize"] = len(pairs)
+        empty["note"] = "Not enough distinct groups for outlier analysis."
+        return empty
+
     vals = [v for _, v in pairs]
     mu = mean(vals)
+    med = median(vals)
     sigma = pstdev(vals)
-    if sigma == 0:
-        return []
-    outliers = [(lab, v, (v - mu) / sigma) for lab, v in pairs if abs((v - mu) / sigma) >= 2.5]
-    outliers.sort(key=lambda x: -abs(x[2]))
-    highlights = []
-    for lab, v, z in outliers[:3]:
-        direction = "high" if z > 0 else "low"
-        highlights.append(
+    vmin = min(vals)
+    vmax = max(vals)
+    try:
+        q1, q2, q3 = quantiles(vals, n=4, method="inclusive")
+    except Exception:
+        sorted_vals = sorted(vals)
+        q1 = sorted_vals[len(sorted_vals) // 4]
+        q2 = med
+        q3 = sorted_vals[(3 * len(sorted_vals)) // 4]
+    iqr = q3 - q1
+    low_fence = q1 - 1.5 * iqr
+    high_fence = q3 + 1.5 * iqr
+
+    scored: list[dict[str, Any]] = []
+    for lab, v in pairs:
+        z = ((v - mu) / sigma) if sigma else 0.0
+        iqr_flag = v < low_fence or v > high_fence
+        z_flag = abs(z) >= 2.0 if sigma else False
+        if not (iqr_flag or z_flag):
+            continue
+        direction = "high" if v >= mu else "low"
+        methods = []
+        if z_flag:
+            methods.append("z-score")
+        if iqr_flag:
+            methods.append("IQR")
+        scored.append(
             {
-                "severity": "high" if abs(z) >= 3 else "medium",
-                "category": "outlier",
+                "label": lab,
+                "value": v,
+                "zScore": z,
+                "direction": direction,
+                "methods": methods,
+                "severity": "high" if abs(z) >= 3 or (iqr_flag and abs(z) >= 2.5) else "medium",
                 "text": (
-                    f"{lab} is an unusually {direction} {measure['name']} "
-                    f"({_fmt_num(v)}, z={z:.1f})."
+                    f"“{lab}” is an unusually {direction} {measure['name']} "
+                    f"({_fmt_num(v)}"
+                    + (f", z={z:.1f}" if sigma else "")
+                    + f"; flagged by {' + '.join(methods)})."
                 ),
             }
         )
-    return highlights
 
+    scored.sort(key=lambda x: (-abs(x["zScore"]), -abs(x["value"])))
+    top = scored[:8]
+
+    pointers: list[dict[str, Any]] = [
+        {
+            "periodType": "outlier",
+            "severity": "info",
+            "text": (
+                f"Distribution for {measure['name']}"
+                + (f" by {dim['name']}" if dim else "")
+                + f": n={len(pairs)}, mean {_fmt_num(mu)}, median {_fmt_num(med)}, "
+                f"σ {_fmt_num(sigma)}, range {_fmt_num(vmin)} → {_fmt_num(vmax)}."
+            ),
+            "direction": "flat",
+        },
+        {
+            "periodType": "outlier",
+            "severity": "info",
+            "text": (
+                f"IQR fences: Q1 {_fmt_num(q1)}, Q3 {_fmt_num(q3)}, IQR {_fmt_num(iqr)} "
+                f"(low {_fmt_num(low_fence)}, high {_fmt_num(high_fence)})."
+            ),
+            "direction": "flat",
+        },
+    ]
+
+    if top:
+        pointers.append(
+            {
+                "periodType": "outlier",
+                "severity": "warning",
+                "text": f"Found {len(scored)} outlier group(s); showing top {len(top)} by magnitude.",
+                "direction": "flat",
+            }
+        )
+    else:
+        pointers.append(
+            {
+                "periodType": "outlier",
+                "severity": "info",
+                "text": (
+                    f"No strong outliers detected for {measure['name']} "
+                    f"(no |z|≥2.0 or IQR fence breaches)."
+                ),
+                "direction": "flat",
+            }
+        )
+
+    for item in top:
+        pointers.append(
+            {
+                "periodType": "outlier",
+                "severity": item["severity"],
+                "text": item["text"],
+                "current": item["value"],
+                "direction": "up" if item["direction"] == "high" else "down",
+                "pctChange": item["zScore"] * 10,  # visual cue only in UI thresholding
+            }
+        )
+
+    # Extreme values even if not statistically flagged
+    by_value = sorted(pairs, key=lambda x: x[1], reverse=True)
+    if by_value:
+        hi_lab, hi_v = by_value[0]
+        lo_lab, lo_v = by_value[-1]
+        pointers.append(
+            {
+                "periodType": "outlier",
+                "severity": "info",
+                "text": (
+                    f"Highest {measure['name']}: “{hi_lab}” = {_fmt_num(hi_v)}; "
+                    f"lowest: “{lo_lab}” = {_fmt_num(lo_v)}."
+                ),
+                "direction": "flat",
+            }
+        )
+
+    highlights = [
+        {
+            "severity": item["severity"],
+            "category": "outlier",
+            "text": item["text"],
+            "details": {
+                "label": item["label"],
+                "value": item["value"],
+                "zScore": item["zScore"],
+                "methods": item["methods"],
+            },
+        }
+        for item in top[:5]
+    ]
+
+    return {
+        "measure": measure["name"],
+        "dimension": dim["name"] if dim else None,
+        "method": "zscore+iqr",
+        "sampleSize": len(pairs),
+        "stats": {
+            "count": len(pairs),
+            "mean": mu,
+            "median": med,
+            "stdDev": sigma,
+            "min": vmin,
+            "max": vmax,
+            "q1": q1,
+            "q2": q2,
+            "q3": q3,
+            "iqr": iqr,
+            "lowFence": low_fence,
+            "highFence": high_fence,
+        },
+        "outliers": top,
+        "pointers": pointers,
+        "highlights": highlights,
+        "note": None,
+    }
 
 def _build_template_summary(
     worksheet: str,
@@ -788,8 +967,20 @@ def analyze_table(
                 }
             )
 
+    outlier_analysis: dict[str, Any] = {
+        "measure": None,
+        "dimension": None,
+        "method": "zscore+iqr",
+        "sampleSize": 0,
+        "stats": None,
+        "outliers": [],
+        "pointers": [],
+        "highlights": [],
+        "note": "No numeric measure available for outlier analysis.",
+    }
     if primary_measure:
-        highlights.extend(_outlier_highlights(rows, primary_measure, primary_dim))
+        outlier_analysis = _outlier_analysis(rows, primary_measure, primary_dim)
+        highlights.extend(outlier_analysis.get("highlights") or [])
 
     for p in profiles:
         if p["nullRate"] >= 0.15:
@@ -872,6 +1063,97 @@ def analyze_table(
         notes.append("Worksheet returned no summary rows (check filters).")
     notes.append("Insights use dashboard summary data and respect current filters.")
 
+    value_pointers: list[dict[str, Any]] = []
+    for kpi in kpis:
+        bits = [f"{kpi['name']} total {_fmt_num(kpi.get('value') or 0)}"]
+        if kpi.get("mean") is not None:
+            bits.append(f"mean {_fmt_num(kpi['mean'])}")
+        if kpi.get("min") is not None and kpi.get("max") is not None:
+            bits.append(f"range {_fmt_num(kpi['min'])} → {_fmt_num(kpi['max'])}")
+        value_pointers.append(
+            {
+                "periodType": "value",
+                "severity": "info",
+                "text": "; ".join(bits) + ".",
+                "current": kpi.get("value"),
+                "direction": "flat",
+            }
+        )
+        if kpi.get("momPct") is not None:
+            d = kpi.get("momDelta") or 0
+            value_pointers.append(
+                {
+                    "periodType": "value",
+                    "severity": "warning" if abs(kpi["momPct"]) >= 10 else "info",
+                    "text": (
+                        f"{kpi['name']} MoM: {'↑' if d > 0 else '↓' if d < 0 else '→'} "
+                        f"{_fmt_num(abs(d))} ({abs(kpi['momPct']):.1f}%)."
+                    ),
+                    "current": kpi.get("value"),
+                    "delta": d,
+                    "pctChange": kpi["momPct"],
+                    "direction": "up" if d > 0 else "down" if d < 0 else "flat",
+                }
+            )
+        if kpi.get("qoqPct") is not None:
+            d = kpi.get("qoqDelta") or 0
+            value_pointers.append(
+                {
+                    "periodType": "value",
+                    "severity": "warning" if abs(kpi["qoqPct"]) >= 10 else "info",
+                    "text": (
+                        f"{kpi['name']} QoQ: {'↑' if d > 0 else '↓' if d < 0 else '→'} "
+                        f"{_fmt_num(abs(d))} ({abs(kpi['qoqPct']):.1f}%)."
+                    ),
+                    "delta": d,
+                    "pctChange": kpi["qoqPct"],
+                    "direction": "up" if d > 0 else "down" if d < 0 else "flat",
+                }
+            )
+        if kpi.get("yoyPct") is not None:
+            d = kpi.get("yoyDelta") or 0
+            value_pointers.append(
+                {
+                    "periodType": "value",
+                    "severity": "warning" if abs(kpi["yoyPct"]) >= 10 else "info",
+                    "text": (
+                        f"{kpi['name']} YoY (T12M): {'↑' if d > 0 else '↓' if d < 0 else '→'} "
+                        f"{_fmt_num(abs(d))} ({abs(kpi['yoyPct']):.1f}%)."
+                    ),
+                    "delta": d,
+                    "pctChange": kpi["yoyPct"],
+                    "direction": "up" if d > 0 else "down" if d < 0 else "flat",
+                }
+            )
+
+    for block in [
+        comparisons.get("monthOverMonth"),
+        comparisons.get("quarterOverQuarter"),
+        comparisons.get("yearOverYear"),
+        comparisons.get("yearToDate"),
+        comparisons.get("sameMonthPriorYear"),
+    ]:
+        if not block:
+            continue
+        value_pointers.append(
+            {
+                "periodType": "value",
+                "severity": "warning" if abs(block.get("pctChange") or 0) >= 10 else "info",
+                "text": (
+                    f"{block['label']}: {_fmt_num(block['current'])} vs {_fmt_num(block['previous'])} "
+                    f"({block.get('pointer') or ''})"
+                ),
+                "current": block.get("current"),
+                "previous": block.get("previous"),
+                "delta": block.get("delta"),
+                "pctChange": block.get("pctChange"),
+                "direction": block.get("direction"),
+            }
+        )
+
+    period_pointers = list(comparisons.get("pointers") or [])
+    combined_pointers = period_pointers + value_pointers + list(outlier_analysis.get("pointers") or [])
+
     quantitative = {
         "measure": comparisons.get("measure") or (primary_measure["name"] if primary_measure else None),
         "dateField": comparisons.get("dateField") or (primary_date["name"] if primary_date else None),
@@ -887,11 +1169,13 @@ def analyze_table(
             ]
             if block
         ],
-        "pointers": comparisons.get("pointers") or [],
+        "pointers": combined_pointers,
         "monthlyChanges": comparisons.get("monthlyChanges") or [],
         "quarterlyChanges": comparisons.get("quarterlyChanges") or [],
         "monthlySeries": comparisons.get("monthlySeries") or [],
         "quarterlySeries": comparisons.get("quarterlySeries") or [],
+        "outliers": outlier_analysis,
+        "values": value_pointers,
     }
 
     return {
@@ -901,6 +1185,7 @@ def analyze_table(
         "highlights": highlights,
         "comparisons": comparisons,
         "quantitative": quantitative,
+        "outlierAnalysis": outlier_analysis,
         "profiles": profiles,
         "schema": {
             "measures": [m["name"] for m in measures_meta],

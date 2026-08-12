@@ -86,6 +86,30 @@ export type QuantitativeAnalysis = {
   quarterlyChanges: PeriodChange[];
   monthlySeries: Array<{ period: string; value: number }>;
   quarterlySeries: Array<{ period: string; value: number }>;
+  outliers?: OutlierAnalysis;
+  values?: QuantitativePointer[];
+};
+
+export type OutlierItem = {
+  label: string;
+  value: number;
+  zScore: number;
+  direction: "high" | "low" | string;
+  methods?: string[];
+  severity?: string;
+  text: string;
+};
+
+export type OutlierAnalysis = {
+  measure?: string | null;
+  dimension?: string | null;
+  method?: string;
+  sampleSize?: number;
+  stats?: Record<string, number> | null;
+  outliers?: OutlierItem[];
+  pointers?: QuantitativePointer[];
+  highlights?: Highlight[];
+  note?: string | null;
 };
 
 export type NarrativeResult = {
@@ -122,6 +146,7 @@ export type NarrativeResult = {
     asOf?: string;
   };
   quantitative?: QuantitativeAnalysis;
+  outlierAnalysis?: OutlierAnalysis;
   profiles: Array<Record<string, unknown>>;
   schema: {
     measures: string[];

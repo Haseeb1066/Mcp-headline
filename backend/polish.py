@@ -370,7 +370,16 @@ def generate_insight_sections(
                                     "pointers": (quantitative.get("pointers") or [])[:8],
                                     "monthlyChanges": (quantitative.get("monthlyChanges") or [])[-6:],
                                     "quarterlyChanges": quantitative.get("quarterlyChanges") or [],
+                                    "outliers": {
+                                        "stats": (quantitative.get("outliers") or {}).get("stats"),
+                                        "pointers": ((quantitative.get("outliers") or {}).get("pointers") or [])[:6],
+                                        "flagged": ((quantitative.get("outliers") or {}).get("outliers") or [])[:5],
+                                    },
                                     "note": quantitative.get("note"),
+                                },
+                                "outlierAnalysis": {
+                                    "stats": (analysis.get("outlierAnalysis") or {}).get("stats"),
+                                    "pointers": ((analysis.get("outlierAnalysis") or {}).get("pointers") or [])[:6],
                                 },
                                 "topDrivers": analysis.get("topDrivers", []),
                             },

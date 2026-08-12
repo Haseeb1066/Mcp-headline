@@ -83,7 +83,70 @@ function highlightInsightText(text: string, explicitDirection?: string | null): 
 
 function quantitativeSections(result: NarrativeResult): InsightSection[] {
   const quantitative = result.quantitative;
-  if (!quantitative) return [];
+  const sections: InsightSection[] = [];
+
+  const contextBits = [
+    quantitative?.measure,
+    quantitative?.dateField ? `by ${quantitative.dateField}` : null,
+    quantitative?.asOf ? `as of ${quantitative.asOf}` : null,
+    result.context?.rowCount != null ? `${result.context.rowCount.toLocaleString()} rows` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const valueInsights: InsightItem[] = [];
+  if (contextBits) {
+    valueInsights.push({
+      text: `Full quantitative basis: ${contextBits}.`,
+      severity: "info",
+    });
+  }
+  for (const kpi of result.kpis || []) {
+    const parts = [`${kpi.name}: ${kpi.formatted}`];
+    if (kpi.momPct != null) {
+      parts.push(
+        `MoM ${kpi.momPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.momPct).toFixed(1)}%` +
+          (kpi.momDelta != null ? ` (${kpi.momDelta >= 0 ? "+" : ""}${kpi.momDelta.toLocaleString()})` : "")
+      );
+    }
+    if (kpi.qoqPct != null) {
+      parts.push(`QoQ ${kpi.qoqPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.qoqPct).toFixed(1)}%`);
+    }
+    if (kpi.yoyPct != null) {
+      parts.push(`YoY ${kpi.yoyPct >= 0 ? "↑" : "↓"} ${Math.abs(kpi.yoyPct).toFixed(1)}%`);
+    }
+    if (kpi.min != null && kpi.max != null) {
+      parts.push(`range ${kpi.min.toLocaleString()} → ${kpi.max.toLocaleString()}`);
+    }
+    valueInsights.push({
+      text: parts.join(" · ") + ".",
+      severity:
+        (kpi.momPct != null && Math.abs(kpi.momPct) >= 10) ||
+        (kpi.yoyPct != null && Math.abs(kpi.yoyPct) >= 10)
+          ? "warning"
+          : "info",
+      direction:
+        (kpi.momPct ?? kpi.yoyPct ?? 0) > 0
+          ? "up"
+          : (kpi.momPct ?? kpi.yoyPct ?? 0) < 0
+            ? "down"
+            : "flat",
+    });
+  }
+  for (const block of quantitative?.headline || []) {
+    valueInsights.push({
+      text:
+        block.pointer ||
+        `${block.label}: ${block.current.toLocaleString()} vs ${block.previous.toLocaleString()} ` +
+          `(${block.direction === "up" ? "↑" : block.direction === "down" ? "↓" : "→"} ` +
+          `${Math.abs(block.pctChange ?? 0).toFixed(1)}%).`,
+      severity: block.pctChange != null && Math.abs(block.pctChange) >= 10 ? "warning" : "info",
+      direction: block.direction,
+    });
+  }
+  if (valueInsights.length) {
+    sections.push({ title: "Quantitative Values", insights: valueInsights });
+  }
 
   const grouped = new Map<string, InsightItem[]>([
     ["Monthly Quantitative Analysis", []],
@@ -91,40 +154,111 @@ function quantitativeSections(result: NarrativeResult): InsightSection[] {
     ["Yearly Quantitative Analysis", []],
   ]);
 
-  for (const pointer of quantitative.pointers) {
+  for (const pointer of quantitative?.pointers || []) {
+    if (pointer.periodType === "value" || pointer.periodType === "outlier") continue;
     const title =
       pointer.periodType === "monthly"
         ? "Monthly Quantitative Analysis"
         : pointer.periodType === "quarterly"
           ? "Quarterly Quantitative Analysis"
-          : "Yearly Quantitative Analysis";
+          : pointer.periodType === "yearly"
+            ? "Yearly Quantitative Analysis"
+            : null;
+    if (!title) continue;
     grouped.get(title)?.push({
       text: pointer.text,
       severity:
-        pointer.pctChange != null && Math.abs(pointer.pctChange) >= 10
-          ? "warning"
-          : "info",
+        pointer.pctChange != null && Math.abs(pointer.pctChange) >= 10 ? "warning" : "info",
       direction: pointer.direction,
     });
   }
 
-  const context = [
-    quantitative.measure,
-    quantitative.dateField ? `by ${quantitative.dateField}` : null,
-    quantitative.asOf ? `as of ${quantitative.asOf}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // Fill monthly/quarterly with full change series when pointers alone are thin
+  const monthlyBucket = grouped.get("Monthly Quantitative Analysis")!;
+  if (monthlyBucket.length < 4) {
+    for (const change of (quantitative?.monthlyChanges || []).slice(-8)) {
+      monthlyBucket.push({
+        text: change.pointer,
+        severity:
+          change.pctChange != null && Math.abs(change.pctChange) >= 10 ? "warning" : "info",
+        direction: change.direction,
+      });
+    }
+  }
+  const quarterlyBucket = grouped.get("Quarterly Quantitative Analysis")!;
+  if (quarterlyBucket.length < 3) {
+    for (const change of quantitative?.quarterlyChanges || []) {
+      quarterlyBucket.push({
+        text: change.pointer,
+        severity:
+          change.pctChange != null && Math.abs(change.pctChange) >= 10 ? "warning" : "info",
+        direction: change.direction,
+      });
+    }
+  }
 
-  return [...grouped.entries()]
-    .filter(([, insights]) => insights.length > 0)
-    .map(([title, insights], index) => ({
-      title,
-      insights:
-        index === 0 && context
-          ? [{ text: `Comparison basis: ${context}.`, severity: "info" }, ...insights]
-          : insights,
-    }));
+  for (const [title, insights] of grouped) {
+    if (!insights.length) continue;
+    sections.push({ title, insights });
+  }
+
+  const outlier = quantitative?.outliers || result.outlierAnalysis;
+  const outlierInsights: InsightItem[] = [];
+  if (outlier?.note && !(outlier.pointers || []).length) {
+    outlierInsights.push({ text: outlier.note, severity: "info" });
+  }
+  for (const pointer of outlier?.pointers || []) {
+    outlierInsights.push({
+      text: pointer.text,
+      severity:
+        pointer.severity === "high" || pointer.severity === "warning"
+          ? "warning"
+          : pointer.severity === "critical"
+            ? "critical"
+            : "info",
+      direction: pointer.direction,
+    });
+  }
+  for (const item of outlier?.outliers || []) {
+    if (outlierInsights.some((i) => i.text === item.text)) continue;
+    outlierInsights.push({
+      text: item.text,
+      severity: item.severity === "high" ? "warning" : "info",
+      direction: item.direction === "high" ? "up" : "down",
+    });
+  }
+  if (outlierInsights.length) {
+    sections.push({ title: "Outlier Analysis", insights: outlierInsights });
+  }
+
+  const fullInsights: InsightItem[] = [];
+  for (const driver of (result.topDrivers || []).slice(0, 5)) {
+    fullInsights.push({
+      text:
+        `${driver.dimension} “${driver.value}”: ${driver.total.toLocaleString()} ` +
+        `(${(driver.share * 100).toFixed(1)}% of ${driver.measure}).`,
+      severity: driver.share >= 0.25 ? "warning" : "info",
+      direction: "flat",
+    });
+  }
+  for (const h of result.highlights || []) {
+    if (h.category === "outlier") continue; // already in Outlier Analysis
+    fullInsights.push({
+      text: h.text,
+      severity:
+        h.severity === "high" ? "warning" : h.severity === "low" ? "info" : "info",
+      direction: /increased|grew|up|ahead/i.test(h.text)
+        ? "up"
+        : /decreased|declined|down|behind/i.test(h.text)
+          ? "down"
+          : "flat",
+    });
+  }
+  if (fullInsights.length) {
+    sections.push({ title: "Full Analysis", insights: fullInsights });
+  }
+
+  return sections;
 }
 
 function displaySections(result: NarrativeResult): InsightSection[] {
